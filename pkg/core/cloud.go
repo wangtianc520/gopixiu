@@ -20,18 +20,19 @@ import (
 	"context"
 	"fmt"
 
-	v1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/caoyingjunz/gopixiu/api/types"
-	"github.com/caoyingjunz/gopixiu/cmd/app/config"
 	"github.com/caoyingjunz/gopixiu/pkg/core/client"
+	pixiukubernetes "github.com/caoyingjunz/gopixiu/pkg/core/kubernetes"
 	"github.com/caoyingjunz/gopixiu/pkg/db"
 	"github.com/caoyingjunz/gopixiu/pkg/db/model"
 	"github.com/caoyingjunz/gopixiu/pkg/log"
 )
+
+var clientError = fmt.Errorf("failed to found clout client")
 
 type CloudGetter interface {
 	Cloud() CloudInterface
@@ -44,25 +45,29 @@ type CloudInterface interface {
 	Get(ctx context.Context, cid int64) (*types.Cloud, error)
 	List(ctx context.Context) ([]types.Cloud, error)
 
-	InitCloudClients() error
+	Init() error // 初始化 cloud 的客户端
 
-	DeleteDeployment(ctx context.Context, deleteOptions types.GetOrDeleteOptions) error
-	ListDeployments(ctx context.Context, listOptions types.ListOptions) ([]v1.Deployment, error)
+	// kubernetes 资源的接口定义
+	pixiukubernetes.NamespacesGetter
+	pixiukubernetes.ServicesGetter
+	pixiukubernetes.StatefulSetGetter
+	pixiukubernetes.DeploymentsGetter
+	pixiukubernetes.DaemonSetGetter
+	pixiukubernetes.JobsGetter
+	pixiukubernetes.NodesGetter
 }
 
 var clientSets client.ClientsInterface
 
 type cloud struct {
-	ComponentConfig config.Config
-	app             *pixiu
-	factory         db.ShareDaoFactory
+	app     *pixiu
+	factory db.ShareDaoFactory
 }
 
 func newCloud(c *pixiu) CloudInterface {
 	return &cloud{
-		ComponentConfig: c.cfg,
-		app:             c,
-		factory:         c.factory,
+		app:     c,
+		factory: c.factory,
 	}
 }
 
@@ -72,6 +77,11 @@ func (c *cloud) preCreate(ctx context.Context, obj *types.Cloud) error {
 	}
 	if len(obj.KubeConfig) == 0 {
 		return fmt.Errorf("invalid empty kubeconfig data")
+	}
+	// 集群类型支持 自建和标准，默认为标准
+	// TODO: 未对类型进行检查
+	if len(obj.CloudType) == 0 {
+		obj.CloudType = "标准"
 	}
 
 	return nil
@@ -89,9 +99,29 @@ func (c *cloud) Create(ctx context.Context, obj *types.Cloud) error {
 		log.Logger.Errorf("failed to create %s clientSet: %v", obj.Name, err)
 		return err
 	}
+	// 获取 k8s 集群信息: k8s 版本，节点数量，资源信息
+	nodes, err := clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	if err != nil || len(nodes.Items) == 0 {
+		log.Logger.Errorf("failed to connected to k8s cluster: %v", err)
+		return err
+	}
+
+	var (
+		kubeVersion string
+		resources   string
+	)
+	// 第一个节点的版本作为集群版本
+	node := nodes.Items[0]
+	nodeStatus := node.Status
+	kubeVersion = nodeStatus.NodeInfo.KubeletVersion
+	// TODO: 未处理 resources
 	if _, err = c.factory.Cloud().Create(ctx, &model.Cloud{
-		Name:       obj.Name,
-		KubeConfig: string(obj.KubeConfig),
+		Name:        obj.Name,
+		CloudType:   obj.CloudType,
+		KubeVersion: kubeVersion,
+		KubeConfig:  string(obj.KubeConfig),
+		NodeNumber:  len(nodes.Items),
+		Resources:   resources,
 	}); err != nil {
 		log.Logger.Errorf("failed to create %s cloud: %v", obj.Name, err)
 		return err
@@ -143,20 +173,7 @@ func (c *cloud) List(ctx context.Context) ([]types.Cloud, error) {
 	return cs, nil
 }
 
-func (c *cloud) model2Type(obj *model.Cloud) *types.Cloud {
-	return &types.Cloud{
-		Id:          obj.Id,
-		Name:        obj.Name,
-		Status:      obj.Status,
-		Description: obj.Description,
-		TimeSpec: types.TimeSpec{
-			GmtCreate:   obj.GmtCreate.Format(timeLayout),
-			GmtModified: obj.GmtModified.Format(timeLayout),
-		},
-	}
-}
-
-func (c *cloud) InitCloudClients() error {
+func (c *cloud) Init() error {
 	// 初始化云客户端
 	clientSets = client.NewCloudClients()
 
@@ -186,21 +203,25 @@ func (c *cloud) newClientSet(data []byte) (*kubernetes.Clientset, error) {
 	return kubernetes.NewForConfig(kubeConfig)
 }
 
-func (c *cloud) ListDeployments(ctx context.Context, listOptions types.ListOptions) ([]v1.Deployment, error) {
-	clientSet, found := clientSets.Get(listOptions.CloudName)
-	if !found {
-		return nil, fmt.Errorf("failed to found %s client", listOptions.CloudName)
+func (c *cloud) model2Type(obj *model.Cloud) *types.Cloud {
+	// TODO: 优化转换
+	status := "正常"
+	if obj.Status == 2 {
+		status = "异常"
 	}
 
-	deployments, err := clientSet.AppsV1().Deployments(listOptions.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		log.Logger.Errorf("failed to list %s deployments: %v", listOptions.Namespace, err)
-		return nil, err
+	return &types.Cloud{
+		Id:          obj.Id,
+		Name:        obj.Name,
+		Status:      status,
+		CloudType:   obj.CloudType,
+		KubeVersion: obj.KubeVersion,
+		NodeNumber:  obj.NodeNumber,
+		Resources:   obj.Resources,
+		Description: obj.Description,
+		TimeSpec: types.TimeSpec{
+			GmtCreate:   obj.GmtCreate.Format(timeLayout),
+			GmtModified: obj.GmtModified.Format(timeLayout),
+		},
 	}
-
-	return deployments.Items, nil
-}
-
-func (c *cloud) DeleteDeployment(ctx context.Context, deleteOptions types.GetOrDeleteOptions) error {
-	return nil
 }

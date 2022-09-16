@@ -14,34 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package db
+package kubernetes
 
-import (
-	"gorm.io/gorm"
+import "fmt"
 
-	"github.com/caoyingjunz/gopixiu/pkg/db/cloud"
-	"github.com/caoyingjunz/gopixiu/pkg/db/user"
-)
-
-type ShareDaoFactory interface {
-	User() user.UserInterface
-	Cloud() cloud.CloudInterface
-}
-
-type shareDaoFactory struct {
-	db *gorm.DB
-}
-
-func (f *shareDaoFactory) Cloud() cloud.CloudInterface {
-	return cloud.NewCloud(f.db)
-}
-
-func (f *shareDaoFactory) User() user.UserInterface {
-	return user.NewUser(f.db)
-}
-
-func NewDaoFactory(db *gorm.DB) ShareDaoFactory {
-	return &shareDaoFactory{
-		db: db,
-	}
-}
+var clientError = fmt.Errorf("failed to found clout client")

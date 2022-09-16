@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/bndr/gojenkins"
 	pixiuConfig "github.com/caoyingjunz/pixiulib/config"
@@ -32,6 +33,7 @@ import (
 	"github.com/caoyingjunz/gopixiu/pkg/db"
 	"github.com/caoyingjunz/gopixiu/pkg/log"
 	"github.com/caoyingjunz/gopixiu/pkg/types"
+	"github.com/caoyingjunz/gopixiu/pkg/util"
 )
 
 const (
@@ -98,13 +100,29 @@ func (o *Options) BindFlags(cmd *cobra.Command) {
 }
 
 func (o *Options) register() error {
-	log.Register(o.ComponentConfig.Default.LogDir, o.ComponentConfig.Default.LogLevel) // 注册日志
-	if err := o.registerDatabase(); err != nil {                                       // 注册数据库
+	if err := o.registerLogger(); err != nil { // 注册日志
+		return err
+	}
+	if err := o.registerDatabase(); err != nil { // 注册数据库
 		return err
 	}
 	if err := o.registerCicdDriver(); err != nil { // 注册 CICD driver
 		return err
 	}
+
+	return nil
+}
+
+func (o *Options) registerLogger() error {
+	logType := strings.ToLower(o.ComponentConfig.Default.LogType)
+	if logType == "file" {
+		// 判断文件夹是否存在，不存在则创建
+		if err := util.EnsureDirectoryExists(o.ComponentConfig.Default.LogDir); err != nil {
+			return err
+		}
+	}
+	// 注册日志
+	log.Register(logType, o.ComponentConfig.Default.LogDir, o.ComponentConfig.Default.LogLevel)
 
 	return nil
 }
@@ -151,9 +169,4 @@ func (o *Options) registerCicdDriver() error {
 // TODO
 func (o *Options) Validate() error {
 	return nil
-}
-
-// Run executes gopixiu command
-func (o *Options) Run(stopCh <-chan struct{}) {
-	_ = o.GinEngine.Run(fmt.Sprintf(":%d", o.ComponentConfig.Default.Listen))
 }

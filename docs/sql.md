@@ -3,19 +3,6 @@
 CREATE DATABASE gopixiu;
 ```
 
-## 创建 `demos` 表
-```sql
-CREATE TABLE `demos` (
-    id int primary key NOT NULL AUTO_INCREMENT COMMENT '主键' ,
-    gmt_create datetime COMMENT '创建时间',
-    gmt_modified datetime COMMENT '修改时间',
-    resource_version int COMMENT '版本号',
-    name varchar(128) COMMENT 'demo 名称',
-    KEY `idx_name` (`name`),
-    UNIQUE KEY `name` (`name`)
-) ENGINE=InnoDB CHARSET=utf8 AUTO_INCREMENT=20220801;
-```
-
 ## 创建 `users` 表
 ```sql
 CREATE TABLE `users` (
@@ -49,7 +36,11 @@ CREATE TABLE `clouds` (
     resource_version int COMMENT '版本号',
     name varchar(128) COMMENT '用户名',
     status int COMMENT '集群状态',
+    cloud_type varchar(128) COMMENT '集群类型',
+    kube_version varchar(128) COMMENT 'k8s 集群版本',
     kube_config text COMMENT 'kubeConfig',
+    node_number int COMMENT '集群节点数量',
+    resources varchar(128) COMMENT '资源数量',
     description text COMMENT '描述',
     extension text COMMENT '扩展字段',
     KEY `idx_name` (`name`),
